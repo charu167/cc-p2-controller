@@ -3,7 +3,7 @@ import time
 import os
 from dotenv import load_dotenv
 from enum import Enum
-
+  
 
 # Load all environment variables
 load_dotenv()
@@ -66,7 +66,7 @@ class EC2:
 
     def terminate_instances(self, instance_IDs=None):
         if instance_IDs:
-            instance_IDs = [i for i in instance_IDs if i != "i-043fc2f0028e61c5e"]
+            instance_IDs = [i for i in instance_IDs if i != "i-038bccd4e39c6ef79"]
         self.ec2_client.terminate_instances(
             InstanceIds=instance_IDs if instance_IDs else self.instance_IDs
         )
