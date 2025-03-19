@@ -145,9 +145,9 @@ if __name__ == "__main__":
                     ec2.launch_instances(min_count=3, max_count=3)
                 time.sleep(300)
             else:
-                if running_instances:
-                    print("Stopping Instances")
-                    ec2.stop_instances(running_instances)
+                # if running_instances:
+                #     print("Stopping Instances")
+                #     ec2.stop_instances(running_instances)
                 time.sleep(5)
     except KeyboardInterrupt as keyboard_interrupt:
         print("keyboard Interrupt, stopping now")
