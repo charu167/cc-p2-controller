@@ -1,6 +1,6 @@
 import boto3
 import time
-import os  
+import os
 from dotenv import load_dotenv
 from enum import Enum
 
@@ -65,6 +65,8 @@ class EC2:
         return self.instance_IDs
 
     def terminate_instances(self, instance_IDs=None):
+        if instance_IDs:
+            instance_IDs = [i for i in instance_IDs if i != "i-043fc2f0028e61c5e"]
         self.ec2_client.terminate_instances(
             InstanceIds=instance_IDs if instance_IDs else self.instance_IDs
         )
