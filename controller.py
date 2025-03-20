@@ -3,7 +3,7 @@ import time
 import os
 from dotenv import load_dotenv
 from enum import Enum
-  
+import math
 
 # Load all environment variables
 load_dotenv()
@@ -48,25 +48,33 @@ class EC2:
             KeyName=KEY_PAIR,
             SecurityGroupIds=[SECURITY_GROUP_ID],
             SubnetId=SUBNET_ID,
-            MinCount=min_count,  # Launch at least 3 instances
-            MaxCount=max_count,  # Maximum 3 instances
-            TagSpecifications=[
-                {
-                    "ResourceType": "instance",
-                    "Tags": [{"Key": "Name", "Value": "app-tier-instance-0"}],
-                }
-            ],
+            MinCount=min_count,
+            MaxCount=max_count,
         )
 
-        for resp in responses["Instances"]:
-            instance_ID = resp["InstanceId"]
-            self.instance_IDs.append(instance_ID)
+        # Extract instance IDs
+        instance_ids = [instance["InstanceId"] for instance in responses["Instances"]]
 
-        return self.instance_IDs
+        # Create tag names dynamically
+        tags = [
+            {
+                "ResourceId": instance_id,
+                "Tags": [{"Key": "Name", "Value": f"app-tier-instance-{i+1}"}],
+            }
+            for i, instance_id in enumerate(instance_ids)
+        ]
+
+        # Apply the tags
+        self.ec2_client.create_tags(
+            Resources=[tag["ResourceId"] for tag in tags],
+            Tags=[{"Key": "Name", "Value": tag["Tags"][0]["Value"]} for tag in tags],
+        )
+
+        return instance_ids
 
     def terminate_instances(self, instance_IDs=None):
         if instance_IDs:
-            instance_IDs = [i for i in instance_IDs if i != "i-038bccd4e39c6ef79"]
+            instance_IDs = [i for i in instance_IDs if i != "i-0dd39ee74722684db"]
         self.ec2_client.terminate_instances(
             InstanceIds=instance_IDs if instance_IDs else self.instance_IDs
         )
@@ -78,7 +86,10 @@ class EC2:
 
     def get_instances_by_state(self, instance_state: Instance_State):
         response = self.ec2_client.describe_instances(
-            Filters=[{"Name": "instance-state-name", "Values": [instance_state.value]}]
+            Filters=[
+                {"Name": "instance-state-name", "Values": [instance_state.value]},
+                {"Name": "image-id", "Values": [AMI_ID]},
+            ]
         )
         instance_IDs = []
         for items in response["Reservations"]:
@@ -120,34 +131,60 @@ class SQS:
         self.sqs_client.purge_queue(QueueUrl=queue_url)
 
 
+# Get required number of instances at any given time
+def required_instaces(queue_len: int):
+    MAX = 15
+    return min(MAX, math.ceil(queue_len / 6))
+
+
+def maintain_state(required_num_instances, ec2: EC2):
+    # WAIT_TIME = 60
+
+    running_instances = ec2.get_instances_by_state(Instance_State.RUNNING)
+    pending_instances = ec2.get_instances_by_state(Instance_State.PENDING)
+
+    # if pending_instances:
+    #     time.sleep(WAIT_TIME)
+
+    stopped_instances = ec2.get_instances_by_state(Instance_State.STOPPED)
+    # stopping_instances = ec2.get_instances_by_state(Instance_State.STOPPING)
+
+    total_active_instances = len(running_instances) + len(pending_instances)
+    
+    if required_num_instances > total_active_instances:
+        to_start = required_num_instances - total_active_instances
+        print(f"Starting {to_start} instacnes.")
+        ec2.start_instances(stopped_instances[:to_start])
+
+    elif required_num_instances < len(running_instances):
+        to_stop = len(running_instances) - required_num_instances
+        print(f"Stopping {to_stop} instances.")
+        ec2.stop_instances(running_instances[:to_stop])
+
+
 if __name__ == "__main__":
     ec2 = EC2()
     sqs = SQS()
 
     try:
         while True:
-            queue_len = sqs.get_queue_length(input_queue_url)
-            print(f"Input Queue Length: {queue_len}")
 
-            running_instances = ec2.get_instances_by_state(
-                instance_state=Instance_State.RUNNING
+            queue_len = 0
+            for i in range(5):
+                queue_len += sqs.get_queue_length(input_queue_url)
+                
+            queue_len = queue_len // 5
+            
+            
+
+            required_num_instances = required_instaces(queue_len)
+
+            print(
+                f"Input Queue Length: {queue_len}. Instances reequired: {required_num_instances}"
             )
 
-            print(f"Running Instances: {running_instances}")
-            if queue_len > 0:
-                print("Starting Instances...")
-                stopped_instances = ec2.get_instances_by_state(
-                    instance_state=Instance_State.STOPPED
-                )
-                if stopped_instances:
-                    ec2.start_instances(stopped_instances)
-                else:
-                    ec2.launch_instances(min_count=3, max_count=3)
-                time.sleep(300)
-            else:
-                # if running_instances:
-                #     print("Stopping Instances")
-                #     ec2.stop_instances(running_instances)
-                time.sleep(5)
+            maintain_state(required_num_instances, ec2)
+
+            time.sleep(1)
     except KeyboardInterrupt as keyboard_interrupt:
         print("keyboard Interrupt, stopping now")
