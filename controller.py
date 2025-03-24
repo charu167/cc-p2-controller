@@ -7,16 +7,14 @@ import math
 
 # Load all environment variables
 load_dotenv()
-AMI_ID = os.getenv("app_tier_ami_id")
-INSTANCE_TYPE = os.getenv("app_tier_instance_type")
-KEY_PAIR = os.getenv("key_pair")
-SECURITY_GROUP_ID = os.getenv("security_group_id")
-SUBNET_ID = os.getenv("subnet_id")
-REGION = os.getenv("region_name")
+app_tier_ami_id = os.getenv("app_tier_ami_id")
+app_tier_instance_type = os.getenv("app_tier_instance_type")
+key_pair = os.getenv("key_pair")
+sec_group_id = os.getenv("security_group_id")
+subnet_id = os.getenv("subnet_id")
 aws_access_key_id = os.getenv("aws_access_key_id")
 aws_secret_access_key = os.getenv("aws_secret_access_key")
 region_name = os.getenv("region_name")
-
 input_queue_url = os.getenv("input_queue_url")
 output_queue_url = os.getenv("output_queue_url")
 
@@ -24,8 +22,6 @@ output_queue_url = os.getenv("output_queue_url")
 class Instance_State(Enum):
     PENDING = "pending"
     RUNNING = "running"
-    SHUTTING_DOWN = "shutting-down"
-    TERMINATED = "terminated"
     STOPPING = "stopping"
     STOPPED = "stopped"
 
@@ -43,11 +39,11 @@ class EC2:
 
     def launch_instances(self, min_count, max_count):
         responses = self.ec2_client.run_instances(
-            ImageId=AMI_ID,
-            InstanceType=INSTANCE_TYPE,
-            KeyName=KEY_PAIR,
-            SecurityGroupIds=[SECURITY_GROUP_ID],
-            SubnetId=SUBNET_ID,
+            ImageId=app_tier_ami_id,
+            InstanceType=app_tier_instance_type,
+            KeyName=key_pair,
+            SecurityGroupIds=[sec_group_id],
+            SubnetId=subnet_id,
             MinCount=min_count,
             MaxCount=max_count,
         )
@@ -55,16 +51,14 @@ class EC2:
         # Extract instance IDs
         instance_ids = [instance["InstanceId"] for instance in responses["Instances"]]
 
-        # Create tag names dynamically
         tags = [
             {
                 "ResourceId": instance_id,
-                "Tags": [{"Key": "Name", "Value": f"app-tier-instance-{i+1}"}],
+                "Tags": [{"Key": "Name", "Value": f"app-tier-instance-"}],
             }
-            for i, instance_id in enumerate(instance_ids)
+            for instance_id in instance_ids
         ]
 
-        # Apply the tags
         self.ec2_client.create_tags(
             Resources=[tag["ResourceId"] for tag in tags],
             Tags=[{"Key": "Name", "Value": tag["Tags"][0]["Value"]} for tag in tags],
@@ -88,7 +82,7 @@ class EC2:
         response = self.ec2_client.describe_instances(
             Filters=[
                 {"Name": "instance-state-name", "Values": [instance_state.value]},
-                {"Name": "image-id", "Values": [AMI_ID]},
+                {"Name": "image-id", "Values": [app_tier_ami_id]},
             ]
         )
         instance_IDs = []
@@ -138,21 +132,16 @@ def required_instaces(queue_len: int):
 
 
 def maintain_state(required_num_instances, ec2: EC2):
-    # WAIT_TIME = 60
 
     running_instances = ec2.get_instances_by_state(Instance_State.RUNNING)
     pending_instances = ec2.get_instances_by_state(Instance_State.PENDING)
 
-    # if pending_instances:
-    #     time.sleep(WAIT_TIME)
-
     stopped_instances = ec2.get_instances_by_state(Instance_State.STOPPED)
-    # stopping_instances = ec2.get_instances_by_state(Instance_State.STOPPING)
 
-    total_active_instances = len(running_instances) + len(pending_instances)
-    
-    if required_num_instances > total_active_instances:
-        to_start = required_num_instances - total_active_instances
+    active_instances = len(running_instances) + len(pending_instances)
+
+    if required_num_instances > active_instances:
+        to_start = required_num_instances - active_instances
         print(f"Starting {to_start} instacnes.")
         ec2.start_instances(stopped_instances[:to_start])
 
@@ -172,10 +161,8 @@ if __name__ == "__main__":
             queue_len = 0
             for i in range(5):
                 queue_len += sqs.get_queue_length(input_queue_url)
-                
+
             queue_len = queue_len // 5
-            
-            
 
             required_num_instances = required_instaces(queue_len)
 
